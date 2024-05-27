@@ -5,6 +5,10 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
+error InsufficientLiquidityMinted();
+error InsufficientLiquidityBurned();
+error TransferFailed();
+
 contract MinDexSwapV2Pair is ERC20 {
     using Math for uint256;
 
@@ -14,6 +18,10 @@ contract MinDexSwapV2Pair is ERC20 {
 
     uint256 private reserve0;
     uint256 private reserve1;
+
+    event Burn(address indexed sender, uint256 amount0, uint256 amount1);
+    event Mint(address indexed sender, uint256 amount0, uint256 amount1);
+    event Sync(uint256 reserve0, uint256 reserve1);
 
     constructor(
         address _token0,
@@ -30,6 +38,7 @@ contract MinDexSwapV2Pair is ERC20 {
         uint256 amount1 = balance1 - reserve0;
         uint256 liquidity;
         uint256 totalSupply = totalSupply();
+
         if (totalSupply == 0) {
             liquidity = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
             _mint(address(0), MINIMUM_LIQUIDITY);
@@ -41,13 +50,13 @@ contract MinDexSwapV2Pair is ERC20 {
         }
 
         if (liquidity <= 0) {
-            // todo: revert with error
+            revert InsufficientLiquidityMinted();
         }
 
         _mint(msg.sender, liquidity);
         _update(balance0, balance1);
 
-        // todo: emit event
+        emit Mint(msg.sender, amount0, amount1);
     }
 
     function burn() public {
@@ -60,7 +69,7 @@ contract MinDexSwapV2Pair is ERC20 {
         uint256 amount1 = (liquidity * balance1) / totalSupply;
 
         if (amount0 <= 0 || amount1 <= 1) {
-            // todo: revert with error
+            revert InsufficientLiquidityMinted();
         }
 
         _burn(msg.sender, liquidity);
@@ -72,19 +81,19 @@ contract MinDexSwapV2Pair is ERC20 {
 
         _update(balance0, balance1);
 
-        // todo: emit events
+        emit Burn(msg.sender, amount0, amount1);
     }
 
     function _update(uint256 balance0, uint256 balance1) private {
         reserve0 = balance0;
         reserve1 = balance1;
-        // todo: emit sync event
+        emit Sync(reserve0, reserve1);
     }
 
     function _safeTransfer(address token, address to, uint256 value) private {
         bool success = IERC20(token).transfer(to, value);
         if (!success) {
-            // todo: revert with error
+            revert TransferFailed();
         }
     }
 }
