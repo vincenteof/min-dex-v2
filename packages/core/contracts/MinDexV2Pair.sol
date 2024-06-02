@@ -9,15 +9,16 @@ error InsufficientLiquidityMinted();
 error InsufficientLiquidityBurned();
 error TransferFailed();
 
-contract MinDexSwapV2Pair is ERC20 {
+contract MinDexV2Pair is ERC20 {
     using Math for uint256;
 
     uint256 constant MINIMUM_LIQUIDITY = 1000;
+
     address public token0;
     address public token1;
 
-    uint256 private reserve0;
-    uint256 private reserve1;
+    uint112 private reserve0;
+    uint112 private reserve1;
 
     event Burn(address indexed sender, uint256 amount0, uint256 amount1);
     event Mint(address indexed sender, uint256 amount0, uint256 amount1);
@@ -32,20 +33,22 @@ contract MinDexSwapV2Pair is ERC20 {
     }
 
     function mint() public {
+        (uint112 _reserve0, uint112 _reserve1, ) = getReserves();
         uint256 balance0 = IERC20(token0).balanceOf(address(this));
         uint256 balance1 = IERC20(token1).balanceOf(address(this));
-        uint256 amount0 = balance0 - reserve0;
-        uint256 amount1 = balance1 - reserve0;
-        uint256 liquidity;
-        uint256 totalSupply = totalSupply();
+        uint256 amount0 = balance0 - _reserve0;
+        uint256 amount1 = balance1 - _reserve1;
 
-        if (totalSupply == 0) {
+        uint256 liquidity;
+
+        uint256 _totalSupply = totalSupply();
+        if (_totalSupply == 0) {
             liquidity = Math.sqrt(amount0 * amount1) - MINIMUM_LIQUIDITY;
-            _mint(address(0), MINIMUM_LIQUIDITY);
+            _mint(address(this), MINIMUM_LIQUIDITY);
         } else {
             liquidity = Math.min(
-                (amount0 * totalSupply) / reserve0,
-                (amount1 * totalSupply) / reserve1
+                (amount0 * _totalSupply) / _reserve0,
+                (amount1 * _totalSupply) / _reserve1
             );
         }
 
@@ -64,15 +67,16 @@ contract MinDexSwapV2Pair is ERC20 {
         uint256 balance1 = IERC20(token1).balanceOf(address(this));
         uint256 liquidity = balanceOf(msg.sender);
 
-        uint256 totalSupply = totalSupply();
-        uint256 amount0 = (liquidity * balance0) / totalSupply;
-        uint256 amount1 = (liquidity * balance1) / totalSupply;
+        uint256 _totalSupply = totalSupply();
+        uint256 amount0 = (liquidity * balance0) / _totalSupply;
+        uint256 amount1 = (liquidity * balance1) / _totalSupply;
 
-        if (amount0 <= 0 || amount1 <= 1) {
-            revert InsufficientLiquidityMinted();
+        if (amount0 <= 0 || amount1 <= 0) {
+            revert InsufficientLiquidityBurned();
         }
 
         _burn(msg.sender, liquidity);
+
         _safeTransfer(token0, msg.sender, amount0);
         _safeTransfer(token1, msg.sender, amount1);
 
@@ -84,9 +88,21 @@ contract MinDexSwapV2Pair is ERC20 {
         emit Burn(msg.sender, amount0, amount1);
     }
 
+    function sync() public {
+        _update(
+            IERC20(token0).balanceOf(address(this)),
+            IERC20(token1).balanceOf(address(this))
+        );
+    }
+
+    function getReserves() public view returns (uint112, uint112, uint32) {
+        return (reserve0, reserve1, 0);
+    }
+
     function _update(uint256 balance0, uint256 balance1) private {
-        reserve0 = balance0;
-        reserve1 = balance1;
+        reserve0 = uint112(balance0);
+        reserve1 = uint112(balance1);
+
         emit Sync(reserve0, reserve1);
     }
 
