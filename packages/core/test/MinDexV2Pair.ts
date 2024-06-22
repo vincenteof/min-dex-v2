@@ -37,6 +37,12 @@ describe('MinDexV2Pair', () => {
     )
     const publicClient = await hre.viem.getPublicClient()
 
+    async function assertReserves(reserve0: bigint, reserve1: bigint) {
+      const reserves = await minDexV2Pair.read.getReserves()
+      expect(reserves[0]).to.eq(reserve0)
+      expect(reserves[1]).to.eq(reserve1)
+    }
+
     return {
       owner,
       other,
@@ -47,6 +53,7 @@ describe('MinDexV2Pair', () => {
       token1,
       token1ForOther,
       publicClient,
+      assertReserves,
     }
   }
 
@@ -65,7 +72,7 @@ describe('MinDexV2Pair', () => {
   })
 
   describe('Mint', () => {
-    it('mint bootstraps', async function () {
+    it('mints bootstraps', async function () {
       const { minDexV2Pair, token0, token1, owner } = await loadFixture(
         deployMinDexSwapV2PairFixture
       )
@@ -83,7 +90,7 @@ describe('MinDexV2Pair', () => {
 
       expect(await minDexV2Pair.read.totalSupply()).to.eq(parseEther('1'))
     })
-    it('mint when there is liquidity', async () => {
+    it('mints when there is liquidity', async () => {
       const { minDexV2Pair, token0, token1, owner } = await loadFixture(
         deployMinDexSwapV2PairFixture
       )
@@ -103,7 +110,7 @@ describe('MinDexV2Pair', () => {
       expect(reserves[0]).to.eq(parseEther('3'))
       expect(reserves[1]).to.eq(parseEther('3'))
     })
-    it('mint unbalanced', async () => {
+    it('mints unbalanced', async () => {
       const { minDexV2Pair, token0, token1, owner } = await loadFixture(
         deployMinDexSwapV2PairFixture
       )
@@ -126,7 +133,7 @@ describe('MinDexV2Pair', () => {
   })
 
   describe('Burn', () => {
-    it('burn', async () => {
+    it('burns for basic case', async () => {
       const { minDexV2Pair, token0, token1, owner } = await loadFixture(
         deployMinDexSwapV2PairFixture
       )
@@ -150,7 +157,7 @@ describe('MinDexV2Pair', () => {
       )
     })
 
-    it('burn unbalanced', async () => {
+    it('burns unbalanced', async () => {
       const { minDexV2Pair, token0, token1, owner } = await loadFixture(
         deployMinDexSwapV2PairFixture
       )
@@ -181,7 +188,7 @@ describe('MinDexV2Pair', () => {
       )
     })
 
-    it('burn unbalanced different users', async () => {
+    it('burns unbalanced different users', async () => {
       const {
         minDexV2Pair,
         minDexV2PairForOther,
@@ -229,6 +236,74 @@ describe('MinDexV2Pair', () => {
       )
       expect(await token1.read.balanceOf([owner.account.address])).to.eq(
         parseEther('9')
+      )
+    })
+
+    it('swaps for basic case', async () => {
+      const { minDexV2Pair, token0, token1, owner } = await loadFixture(
+        deployMinDexSwapV2PairFixture
+      )
+      await token0.write.transfer([minDexV2Pair.address, parseEther('1')])
+      await token1.write.transfer([minDexV2Pair.address, parseEther('2')])
+      await minDexV2Pair.write.mint()
+      await token0.write.transfer([minDexV2Pair.address, parseEther('0.1')])
+      await minDexV2Pair.write.swap([
+        BigInt(0),
+        parseEther('0.18'),
+        owner.account.address,
+      ])
+    })
+
+    it('swaps for basic case in another direction', async () => {
+      const { minDexV2Pair, token0, token1, owner, assertReserves } =
+        await loadFixture(deployMinDexSwapV2PairFixture)
+      await token0.write.transfer([minDexV2Pair.address, parseEther('1')])
+      await token1.write.transfer([minDexV2Pair.address, parseEther('2')])
+      await minDexV2Pair.write.mint()
+
+      await token1.write.transfer([minDexV2Pair.address, parseEther('0.2')])
+      await minDexV2Pair.write.swap([
+        parseEther('0.09'),
+        BigInt(0),
+        owner.account.address,
+      ])
+      expect(await token0.read.balanceOf([owner.account.address])).to.eq(
+        parseEther('10') - parseEther('1') + parseEther('0.09')
+      )
+      expect(await token1.read.balanceOf([owner.account.address])).to.eq(
+        parseEther('10') - parseEther('2') - parseEther('0.2')
+      )
+      await assertReserves(
+        parseEther('1') - parseEther('0.09'),
+        parseEther('2') + parseEther('0.2')
+      )
+    })
+
+    it('swaps bidirectional', async () => {
+      const { minDexV2Pair, token0, token1, owner, assertReserves } =
+        await loadFixture(deployMinDexSwapV2PairFixture)
+      await token0.write.transfer([minDexV2Pair.address, parseEther('1')])
+      await token1.write.transfer([minDexV2Pair.address, parseEther('2')])
+      await minDexV2Pair.write.mint()
+
+      await token0.write.transfer([minDexV2Pair.address, parseEther('0.1')])
+      await token1.write.transfer([minDexV2Pair.address, parseEther('0.2')])
+      await minDexV2Pair.write.swap([
+        parseEther('0.09'),
+        parseEther('0.18'),
+        owner.account.address,
+      ])
+
+      expect(await token0.read.balanceOf([owner.account.address])).to.eq(
+        parseEther('10') - parseEther('1') - parseEther('0.1') + parseEther('0.09')
+      )
+      expect(await token1.read.balanceOf([owner.account.address])).to.eq(
+        parseEther('10') - parseEther('2') - parseEther('0.2') + parseEther('0.18')
+      )
+
+      await assertReserves(
+        parseEther('1') + parseEther('0.1') - parseEther('0.09'),
+        parseEther('2') + parseEther('0.2') - parseEther('0.18')
       )
     })
   })
