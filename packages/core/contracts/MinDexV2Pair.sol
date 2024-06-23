@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 import "./libraries/UQ112x112.sol";
 // import "hardhat/console.sol";
 
+error AlreadyInitialized();
 error InsufficientLiquidityMinted();
 error InsufficientLiquidityBurned();
 error TransferFailed();
@@ -41,10 +42,12 @@ contract MinDexV2Pair is ERC20 {
         address indexed to
     );
 
-    constructor(
-        address _token0,
-        address _token1
-    ) ERC20("MinDexSwapV2Pair", "MDSV2P") {
+    constructor() ERC20("MinDexSwapV2Pair", "MDSV2P") {}
+
+    function initialize(address _token0, address _token1) public {
+        if (token0 != address(0) || token1 != address(0)) {
+            revert AlreadyInitialized();
+        }
         token0 = _token0;
         token1 = _token1;
     }
