@@ -26,10 +26,8 @@ describe('MinDexV2Pair', () => {
       token1.address,
       { client: { wallet: other } }
     )
-    const minDexV2Pair = await hre.viem.deployContract('MinDexV2Pair', [
-      token0.address,
-      token1.address,
-    ])
+    const minDexV2Pair = await hre.viem.deployContract('MinDexV2Pair', [])
+    minDexV2Pair.write.initialize([token0.address, token1.address])
     const minDexV2PairForOther = await hre.viem.getContractAt(
       'MinDexV2Pair',
       minDexV2Pair.address,
@@ -295,10 +293,16 @@ describe('MinDexV2Pair', () => {
       ])
 
       expect(await token0.read.balanceOf([owner.account.address])).to.eq(
-        parseEther('10') - parseEther('1') - parseEther('0.1') + parseEther('0.09')
+        parseEther('10') -
+          parseEther('1') -
+          parseEther('0.1') +
+          parseEther('0.09')
       )
       expect(await token1.read.balanceOf([owner.account.address])).to.eq(
-        parseEther('10') - parseEther('2') - parseEther('0.2') + parseEther('0.18')
+        parseEther('10') -
+          parseEther('2') -
+          parseEther('0.2') +
+          parseEther('0.18')
       )
 
       await assertReserves(
