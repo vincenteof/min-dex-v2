@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "./libraries/UQ112x112.sol";
-// import "hardhat/console.sol";
+import "hardhat/console.sol";
 
 error AlreadyInitialized();
 error InsufficientLiquidityMinted();
@@ -29,8 +29,8 @@ contract MinDexV2Pair is ERC20 {
     uint112 private reserve1;
     uint32 private blockTimestampLast;
 
-    uint256 public price0CummulativeLast;
-    uint256 public price1CummulativeLast;
+    uint256 public price0CumulativeLast;
+    uint256 public price1CumulativeLast;
 
     event Burn(address indexed sender, uint256 amount0, uint256 amount1);
     event Mint(address indexed sender, uint256 amount0, uint256 amount1);
@@ -125,23 +125,13 @@ contract MinDexV2Pair is ERC20 {
         }
         (uint112 _reserve0, uint112 _reserve1, ) = getReserves();
 
-        // console.log("amount0Out", amount0Out);
-        // console.log("amount1Out", amount1Out);
-        // console.log("_reserve0", _reserve0);
-        // console.log("_reserve1", _reserve1);
-
         if (amount0Out > _reserve0 || amount1Out > _reserve1) {
             revert InsufficientLiquidity();
         }
-        // console.log("a");
+
         uint256 balance0 = IERC20(token0).balanceOf(address(this)) - amount0Out;
         uint256 balance1 = IERC20(token1).balanceOf(address(this)) - amount1Out;
 
-        // console.log("b");
-        // console.log("balance0", balance0);
-        // console.log("balance1", balance1);
-
-        // here to add cast to avoid overflow
         if (balance0 * balance1 < uint256(_reserve0) * uint256(_reserve1)) {
             revert InvalidK();
         }
@@ -174,10 +164,10 @@ contract MinDexV2Pair is ERC20 {
         unchecked {
             uint32 timeElapsed = uint32(block.timestamp) - blockTimestampLast;
             if (timeElapsed > 0 && _reserve0 > 0 && _reserve1 > 0) {
-                price0CummulativeLast +=
+                price0CumulativeLast +=
                     uint256(UQ112x112.encode(_reserve1).uqdiv(_reserve0)) *
                     timeElapsed;
-                price1CummulativeLast +=
+                price1CumulativeLast +=
                     uint256(UQ112x112.encode(_reserve0).uqdiv(_reserve1)) *
                     timeElapsed;
             }

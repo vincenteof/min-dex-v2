@@ -1,5 +1,9 @@
-import { loadFixture } from '@nomicfoundation/hardhat-toolbox-viem/network-helpers'
-import { expect } from 'chai'
+import {
+  loadFixture,
+  time,
+  reset,
+} from '@nomicfoundation/hardhat-toolbox-viem/network-helpers'
+import { assert, expect } from 'chai'
 import hre from 'hardhat'
 import { parseEther } from 'viem'
 
@@ -40,7 +44,28 @@ describe('MinDexV2Pair', () => {
       expect(reserves[0]).to.eq(reserve0)
       expect(reserves[1]).to.eq(reserve1)
     }
+    async function assertCumulativePrices(price0: bigint, price1: bigint) {
+      const price0CumulativeLast =
+        await minDexV2Pair.read.price0CumulativeLast()
+      const price1CumulativeLast =
+        await minDexV2Pair.read.price1CumulativeLast()
+      expect(price0CumulativeLast).to.eq(price0)
+      expect(price1CumulativeLast).to.eq(price1)
+    }
+    async function calculateCurrentPrice() {
+      const reserves = await minDexV2Pair.read.getReserves()
+      const Q112 = BigInt(2 ** 112)
+      const reserve0 = BigInt(reserves[0])
+      const reserve1 = BigInt(reserves[1])
+      const price0 = reserve0 > 0 ? (reserve1 * Q112) / reserve0 : BigInt(0)
+      const price1 = reserve1 > 0 ? (reserve0 * Q112) / reserve1 : BigInt(0)
+      return [price0, price1]
+    }
 
+    async function assertBlockTimestampLast(expected: number) {
+      const [, , blockTimestampLast] = await minDexV2Pair.read.getReserves()
+      expect(blockTimestampLast).to.eq(expected)
+    }
     return {
       owner,
       other,
@@ -52,6 +77,9 @@ describe('MinDexV2Pair', () => {
       token1ForOther,
       publicClient,
       assertReserves,
+      calculateCurrentPrice,
+      assertCumulativePrices,
+      assertBlockTimestampLast,
     }
   }
 
@@ -309,6 +337,171 @@ describe('MinDexV2Pair', () => {
         parseEther('1') + parseEther('0.1') - parseEther('0.09'),
         parseEther('2') + parseEther('0.2') - parseEther('0.18')
       )
+    })
+
+    it('throws when swapping zero out', async () => {
+      const { minDexV2Pair, token0, token1, owner } = await loadFixture(
+        deployMinDexSwapV2PairFixture
+      )
+      await token0.write.transfer([minDexV2Pair.address, parseEther('1')])
+      await token1.write.transfer([minDexV2Pair.address, parseEther('2')])
+      await minDexV2Pair.write.mint()
+      // revertedWith 不支持 viem?
+      await expect(
+        minDexV2Pair.write.swap([BigInt(0), BigInt(0), owner.account.address])
+      ).to.be.rejectedWith(/InsufficientOutputAmount/)
+    })
+
+    it('throws when there is insufficient liquidity', async () => {
+      const { minDexV2Pair, token0, token1, owner } = await loadFixture(
+        deployMinDexSwapV2PairFixture
+      )
+      await token0.write.transfer([minDexV2Pair.address, parseEther('1')])
+      await token1.write.transfer([minDexV2Pair.address, parseEther('2')])
+      await minDexV2Pair.write.mint()
+      await expect(
+        minDexV2Pair.write.swap([
+          BigInt(0),
+          parseEther('2.1'),
+          owner.account.address,
+        ])
+      ).to.be.rejectedWith(/InsufficientLiquidity/)
+      await expect(
+        minDexV2Pair.write.swap([
+          parseEther('1.1'),
+          BigInt(0),
+          owner.account.address,
+        ])
+      ).to.be.rejectedWith(/InsufficientLiquidity/)
+    })
+
+    it('swaps when underpriced', async () => {
+      const { minDexV2Pair, token0, token1, owner, assertReserves } =
+        await loadFixture(deployMinDexSwapV2PairFixture)
+      await token0.write.transfer([minDexV2Pair.address, parseEther('1')])
+      await token1.write.transfer([minDexV2Pair.address, parseEther('2')])
+      await minDexV2Pair.write.mint()
+      await token0.write.transfer([minDexV2Pair.address, parseEther('0.1')])
+      await minDexV2Pair.write.swap([
+        BigInt(0),
+        parseEther('0.09'),
+        owner.account.address,
+      ])
+      expect(await token0.read.balanceOf([owner.account.address])).to.eq(
+        parseEther('10') - parseEther('1') - parseEther('0.1')
+      )
+      expect(await token1.read.balanceOf([owner.account.address])).to.eq(
+        parseEther('10') - parseEther('2') + parseEther('0.09')
+      )
+      await assertReserves(
+        parseEther('1') + parseEther('0.1'),
+        parseEther('2') - parseEther('0.09')
+      )
+    })
+
+    it('throws when swapping overpriced', async () => {
+      const { minDexV2Pair, token0, token1, owner, assertReserves } =
+        await loadFixture(deployMinDexSwapV2PairFixture)
+      await token0.write.transfer([minDexV2Pair.address, parseEther('1')])
+      await token1.write.transfer([minDexV2Pair.address, parseEther('2')])
+      await minDexV2Pair.write.mint()
+      await token0.write.transfer([minDexV2Pair.address, parseEther('0.1')])
+      await expect(
+        minDexV2Pair.write.swap([
+          BigInt(0),
+          parseEther('0.21'),
+          owner.account.address,
+        ])
+      ).to.be.rejectedWith(/InvalidK/)
+      expect(await token0.read.balanceOf([owner.account.address])).to.eq(
+        parseEther('10') - parseEther('1') - parseEther('0.1')
+      )
+      expect(await token1.read.balanceOf([owner.account.address])).to.eq(
+        parseEther('10') - parseEther('2')
+      )
+      // revert 之后状态变更未写入
+      await assertReserves(parseEther('1'), parseEther('2'))
+    })
+
+    it('calculates cumulative prices', async () => {
+      const {
+        minDexV2Pair,
+        token0,
+        token1,
+        owner,
+        calculateCurrentPrice,
+        assertCumulativePrices,
+        assertBlockTimestampLast,
+      } = await loadFixture(deployMinDexSwapV2PairFixture)
+      await token0.write.transfer([minDexV2Pair.address, parseEther('1')])
+      await token1.write.transfer([minDexV2Pair.address, parseEther('1')])
+      const initialTimestamp = await time.latest()
+
+      await time.setNextBlockTimestamp(initialTimestamp + 10)
+      await minDexV2Pair.write.mint()
+
+      const time0 = await time.latest()
+      await assertCumulativePrices(BigInt(0), BigInt(0))
+      const [initialPrice0, initialPrice1] = await calculateCurrentPrice()
+
+      const time1 = time0 + 10
+      await time.setNextBlockTimestamp(time1)
+      await minDexV2Pair.write.sync()
+      await assertCumulativePrices(
+        BigInt(10) * initialPrice0,
+        BigInt(10) * initialPrice1
+      )
+      await assertBlockTimestampLast(time1)
+
+      const time2 = time1 + 10
+      await time.setNextBlockTimestamp(time2)
+      await minDexV2Pair.write.sync()
+      await assertCumulativePrices(
+        BigInt(20) * initialPrice0,
+        BigInt(20) * initialPrice1
+      )
+      await assertBlockTimestampLast(time2)
+
+      const time3 = time2 + 10
+      await time.setNextBlockTimestamp(time3)
+      await minDexV2Pair.write.sync()
+      await assertCumulativePrices(
+        BigInt(30) * initialPrice0,
+        BigInt(30) * initialPrice1
+      )
+      await assertBlockTimestampLast(time3)
+
+      await token0.write.transfer([minDexV2Pair.address, parseEther('2')])
+      await token1.write.transfer([minDexV2Pair.address, parseEther('1')])
+      const time4 = (await time.latest()) + 10
+      await time.setNextBlockTimestamp(time4)
+      await minDexV2Pair.write.mint()
+      await assertBlockTimestampLast(time4)
+      const secondMintPrice0 =
+        (BigInt(30) + BigInt(time4 - time3)) * initialPrice0
+      const secondMintPrice1 =
+        (BigInt(30) + BigInt(time4 - time3)) * initialPrice1
+      await assertCumulativePrices(secondMintPrice0, secondMintPrice1)
+      await assertBlockTimestampLast(time4)
+      const [newPrice0, newPrice1] = await calculateCurrentPrice()
+
+      const time5 = time4 + 10
+      await time.setNextBlockTimestamp(time5)
+      await minDexV2Pair.write.sync()
+      await assertCumulativePrices(
+        secondMintPrice0 + BigInt(10) * newPrice0,
+        secondMintPrice1 + BigInt(10) * newPrice1
+      )
+      await assertBlockTimestampLast(time5)
+
+      const time6 = time5 + 10
+      await time.setNextBlockTimestamp(time6)
+      await minDexV2Pair.write.sync()
+      await assertCumulativePrices(
+        secondMintPrice0 + BigInt(20) * newPrice0,
+        secondMintPrice1 + BigInt(20) * newPrice1
+      )
+      await assertBlockTimestampLast(time6)
     })
   })
 })
